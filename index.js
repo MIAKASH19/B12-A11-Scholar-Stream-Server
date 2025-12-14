@@ -37,6 +37,12 @@ async function run() {
         res.send(result)
     })
 
+     app.get("/recent-scholarships", async (req, res) => {
+      const cursor = scholarshipCollection.find().limit(6).sort({ scholarshipPostDate: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
 
   } finally {
     // await client.close();
