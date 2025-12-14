@@ -9,7 +9,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 app.use(cors());
 app.use(express.json());
 
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASSWORD}@cluster0.9sqbqr2.mongodb.net/?appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.9sqbqr2.mongodb.net/?appName=Cluster0`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -20,12 +20,24 @@ const client = new MongoClient(uri, {
 });
 
 async function run() {
-  try {
+  try {         
     await client.connect();
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
+
+    const database = client.db("Scholar_Stream_DB");
+    const userCollection = database.collection("users");
+    const scholarshipCollection = database.collection("scholarships");
+
+    app.get("/scholarships", async(req, res)=>{
+        const cursor = scholarshipCollection.find()
+        const result = await cursor.toArray()
+        res.send(result)
+    })
+
+
   } finally {
     // await client.close();
   }
