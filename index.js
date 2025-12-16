@@ -30,6 +30,7 @@ async function run() {
     const database = client.db("Scholar_Stream_DB");
     const userCollection = database.collection("users");
     const scholarshipCollection = database.collection("scholarships");
+    const reviewCollection = database.collection("reviews");
 
     app.get("/scholarships", async (req, res) => {
       const cursor = scholarshipCollection.find();
@@ -49,6 +50,16 @@ async function run() {
         .find()
         .limit(6)
         .sort({ scholarshipPostDate: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    app.get("/reviews", async (req, res) => {
+      const scholarshipId = req.query.scholarshipId;
+      const query = scholarshipId
+        ? { "scholarshipId": new ObjectId(scholarshipId) }
+        : {};
+      const cursor = reviewCollection.find(query);
       const result = await cursor.toArray();
       res.send(result);
     });
