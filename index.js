@@ -32,6 +32,29 @@ async function run() {
     const scholarshipCollection = database.collection("scholarships");
     const reviewCollection = database.collection("reviews");
 
+    app.post("/users", async (req, res) => {
+      const newUser = {
+        ...req.body,
+        role: req.body.role || "Student",
+      };
+
+      const email = req.body.email;
+      const query = { email: email };
+
+      const existingUser = await userCollection.findOne(query);
+
+      if (existingUser) {
+        res.json({
+          success: true,
+          message: "User already exists",
+          user: existingUser,
+        });
+      } else {
+        const result = await userCollection.insertOne(newUser);
+        res.send(result);
+      }
+    });
+
     app.get("/scholarships", async (req, res) => {
       const cursor = scholarshipCollection.find();
       const result = await cursor.toArray();
@@ -57,7 +80,7 @@ async function run() {
     app.get("/reviews", async (req, res) => {
       const scholarshipId = req.query.scholarshipId;
       const query = scholarshipId
-        ? { "scholarshipId": new ObjectId(scholarshipId) }
+        ? { scholarshipId: new ObjectId(scholarshipId) }
         : {};
       const cursor = reviewCollection.find(query);
       const result = await cursor.toArray();
