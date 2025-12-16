@@ -30,6 +30,7 @@ async function run() {
     const database = client.db("Scholar_Stream_DB");
     const userCollection = database.collection("users");
     const scholarshipCollection = database.collection("scholarships");
+    const applicationCollection = database.collection("applications");
     const reviewCollection = database.collection("reviews");
 
     app.post("/users", async (req, res) => {
@@ -52,6 +53,40 @@ async function run() {
       } else {
         const result = await userCollection.insertOne(newUser);
         res.send(result);
+      }
+    });
+
+    app.post("/applications", async (req, res) => {
+      try {
+        const newApplication = req.body;
+        const userId = newApplication.userId;
+        const query = {
+          userId: userId,
+          scholarshipId: newApplication.scholarshipId,
+        }; 
+
+        const existingApplication = await applicationCollection.findOne(query);
+
+        if (existingApplication) {
+          res.json({
+            success: false,
+            message: "You have already applied for this scholarship",
+          });
+        } else {
+          const result = await applicationCollection.insertOne(newApplication);
+          res.status(201).json({
+            success: true,
+            message: "Application submitted successfully",
+            insertedId: result.insertedId,
+          });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({
+          success: false,
+          message: "Failed to submit application",
+          error,
+        });
       }
     });
 
