@@ -1,16 +1,15 @@
 const express = require("express");
 const cors = require("cors");
-const app = express();
+const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
 require("dotenv").config();
-const port = process.env.PORT || 3000;
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
-// Middleware
+const app = express();
+const port = process.env.PORT || 3000;
+
 app.use(cors());
 app.use(express.json());
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.9sqbqr2.mongodb.net/?appName=Cluster0`;
-
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -22,115 +21,189 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
+    const db = client.db("Scholar_Stream_DB");
+    const userCollection = db.collection("users");
+    const scholarshipCollection = db.collection("scholarships");
+    const applicationCollection = db.collection("applications");
+    const reviewCollection = db.collection("reviews");
 
-    const database = client.db("Scholar_Stream_DB");
-    const userCollection = database.collection("users");
-    const scholarshipCollection = database.collection("scholarships");
-    const applicationCollection = database.collection("applications");
-    const reviewCollection = database.collection("reviews");
-
+    // ===== Users =====
     app.post("/users", async (req, res) => {
-      const newUser = {
-        ...req.body,
-        role: req.body.role || "Student",
-      };
-
-      const email = req.body.email;
-      const query = { email: email };
-
-      const existingUser = await userCollection.findOne(query);
-
+      const newUser = { ...req.body, role: req.body.role || "Student" };
+      const existingUser = await userCollection.findOne({
+        email: newUser.email,
+      });
       if (existingUser) {
-        res.json({
+        return res.json({
           success: true,
           message: "User already exists",
           user: existingUser,
         });
-      } else {
-        const result = await userCollection.insertOne(newUser);
-        res.send(result);
       }
+      const result = await userCollection.insertOne(newUser);
+      res.json(result);
+    });
+
+    // ===== Applications =====
+    app.get("/applications", async (req, res) => {
+      const email = req.query.email;
+      const result = await applicationCollection
+        .find({ userEmail: email })
+        .toArray();
+      res.json(result);
     });
 
     app.post("/applications", async (req, res) => {
       try {
         const newApplication = req.body;
-        const userId = newApplication.userId;
-        const query = {
-          userId: userId,
+        const exists = await applicationCollection.findOne({
+          userId: newApplication.userId,
           scholarshipId: newApplication.scholarshipId,
-        }; 
+        });
+        if (exists) return res.status(409).json({ message: "Already applied" });
 
-        const existingApplication = await applicationCollection.findOne(query);
-
-        if (existingApplication) {
-          res.json({
-            success: false,
-            message: "You have already applied for this scholarship",
-          });
-        } else {
-          const result = await applicationCollection.insertOne(newApplication);
-          res.status(201).json({
-            success: true,
-            message: "Application submitted successfully",
-            insertedId: result.insertedId,
-          });
-        }
+        const result = await applicationCollection.insertOne(newApplication);
+        res.status(201).json({ success: true, insertedId: result.insertedId });
       } catch (error) {
         console.error(error);
-        res.status(500).json({
-          success: false,
-          message: "Failed to submit application",
-          error,
-        });
+        res.status(500).json({ message: "Failed to submit application" });
       }
     });
 
+    // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
-      const cursor = scholarshipCollection.find();
-      const result = await cursor.toArray();
-      res.send(result);
+      const result = await scholarshipCollection.find().toArray();
+      res.json(result);
     });
 
     app.get("/scholarship-details/:id", async (req, res) => {
       const id = req.params.id;
-      const query = { _id: new ObjectId(id) };
-      const result = await scholarshipCollection.findOne(query);
-      res.send(result);
+      const scholarship = await scholarshipCollection.findOne({
+        _id: new ObjectId(id),
+      });
+      res.json(scholarship);
     });
 
     app.get("/recent-scholarships", async (req, res) => {
-      const cursor = scholarshipCollection
+      const result = await scholarshipCollection
         .find()
+        .sort({ scholarshipPostDate: -1 })
         .limit(6)
-        .sort({ scholarshipPostDate: -1 });
-      const result = await cursor.toArray();
-      res.send(result);
+        .toArray();
+      res.json(result);
     });
 
+    // *** Reviews API *****
     app.get("/reviews", async (req, res) => {
-      const scholarshipId = req.query.scholarshipId;
-      const query = scholarshipId
-        ? { scholarshipId: new ObjectId(scholarshipId) }
-        : {};
-      const cursor = reviewCollection.find(query);
-      const result = await cursor.toArray();
-      res.send(result);
+      const { scholarshipId, applicationId, email } = req.query;
+      let query = {};
+
+      if (scholarshipId) query.scholarshipId = new ObjectId(scholarshipId);
+      if (applicationId) query.applicationId = new ObjectId(applicationId);
+      if (email) query.userEmail = email;
+
+      try {
+        const reviews = await reviewCollection.find(query).toArray();
+        res.json(reviews);
+      } catch (error) {
+        console.error("GET /reviews error:", error);
+        res.status(500).json({ message: "Internal Server Error" });
+      }
     });
+
+    app.patch("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+      const { reviewComment, ratingPoint } = req.body;
+
+      if (!reviewComment && !ratingPoint) {
+        return res.status(400).send({ message: "Nothing to update" });
+      }
+
+      const updateDoc = {};
+      if (reviewComment) updateDoc.reviewComment = reviewComment;
+      if (ratingPoint) updateDoc.ratingPoint = Number(ratingPoint);
+      updateDoc.reviewDate = new Date();
+
+      try {
+        const result = await reviewCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateDoc }
+        );
+        res.send({ success: true, modifiedCount: result.modifiedCount });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    app.delete("/reviews/:id", async (req, res) => {
+      const id = req.params.id;
+      try {
+        const result = await reviewCollection.deleteOne({ _id: new ObjectId(id) });
+        res.send({ success: true, deletedCount: result.deletedCount });
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // Post review api creation
+    app.post("/reviews", async (req, res) => {
+      const {
+        applicationId,
+        scholarshipId,
+        userImage,
+        userName,
+        userEmail,
+        universityName,
+        ratingPoint,
+        reviewComment,
+      } = req.body;
+
+      if (!applicationId || !userEmail || !ratingPoint) {
+        return res
+          .status(400)
+          .json({
+            message: "applicationId, userEmail and ratingPoint are required",
+          });
+      }
+
+      try {
+        const exists = await reviewCollection.findOne({
+          applicationId: new ObjectId(applicationId),
+          userEmail: userEmail,
+        });
+
+        if (exists)
+          return res.status(409).json({ message: "Review already submitted" });
+
+        const reviewDoc = {
+          applicationId: new ObjectId(applicationId),
+          scholarshipId: scholarshipId ? new ObjectId(scholarshipId) : null,
+          userImage: userImage || "",
+          userName: userName || "Anonymous",
+          userEmail,
+          universityName: universityName || "",
+          ratingPoint: Number(ratingPoint),
+          reviewComment: reviewComment || "",
+          reviewDate: new Date(),
+        };
+
+        const result = await reviewCollection.insertOne(reviewDoc);
+        res.json({ success: true, insertedId: result.insertedId });
+      } catch (error) {
+        console.error("POST /reviews error:", error);
+        res.status(500).json({ message: "Internal Server Error" });
+      }
+    });
+
+    app.get("/", (req, res) => {
+      res.send("Scholar Stream API is running");
+    });
+
+    app.listen(port, () => console.log(`Server running on port ${port}`));
   } finally {
-    // await client.close();
   }
 }
+
 run().catch(console.dir);
-
-app.get("/", (req, res) => {
-  res.send("Steaming");
-});
-
-app.listen(port, () => {
-  console.log("Server is Running");
-});
