@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const { MongoClient, ObjectId, ServerApiVersion } = require("mongodb");
 require("dotenv").config();
+const stripe = require('stripe')(process.env.STRIPE_SECRET);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -69,6 +70,87 @@ async function run() {
         res.status(500).json({ message: "Failed to submit application" });
       }
     });
+
+    app.patch("/applications/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email, universityName, subjectCategory, degree } = req.body;
+
+    if (!email) {
+      return res.status(400).send({ message: "Email is required" });
+    }
+
+    const query = {
+      _id: new ObjectId(id),
+      userEmail: email,
+    };
+
+    const application = await applicationCollection.findOne(query);
+
+    if (!application) {
+      return res.status(404).send({ message: "Application not found" });
+    }
+
+    if (application.applicationStatus !== "pending") {
+      return res
+        .status(403)
+        .send({ message: "Only pending applications can be edited" });
+    }
+
+    const updateDoc = {
+      $set: {
+        ...(universityName && { universityName }),
+        ...(subjectCategory && { subjectCategory }),
+        ...(degree && { degree }),
+      },
+    };
+
+    const result = await applicationCollection.updateOne(query, updateDoc);
+    res.send(result);
+  } catch (error) {
+    console.error("PATCH /applications error:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
+app.delete("/applications/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { email } = req.query; // frontend theke asbe
+
+    if (!email) {
+      return res.status(400).send({ message: "Email is required" });
+    }
+
+    const query = {
+      _id: new ObjectId(id),
+      userEmail: email,
+    };
+
+    const application = await applicationCollection.findOne(query);
+
+    if (!application) {
+      return res.status(404).send({ message: "Application not found" });
+    }
+
+    if (application.applicationStatus !== "pending") {
+      return res
+        .status(403)
+        .send({ message: "Only pending applications can be deleted" });
+    }
+
+    const result = await applicationCollection.deleteOne(query);
+
+    res.send({
+      success: true,
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    console.error("DELETE /applications error:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
+
 
     // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
@@ -139,7 +221,9 @@ async function run() {
     app.delete("/reviews/:id", async (req, res) => {
       const id = req.params.id;
       try {
-        const result = await reviewCollection.deleteOne({ _id: new ObjectId(id) });
+        const result = await reviewCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
         res.send({ success: true, deletedCount: result.deletedCount });
       } catch (error) {
         console.error(error);
@@ -158,14 +242,13 @@ async function run() {
         universityName,
         ratingPoint,
         reviewComment,
+        scholarshipName
       } = req.body;
 
       if (!applicationId || !userEmail || !ratingPoint) {
-        return res
-          .status(400)
-          .json({
-            message: "applicationId, userEmail and ratingPoint are required",
-          });
+        return res.status(400).json({
+          message: "applicationId, userEmail and ratingPoint are required",
+        });
       }
 
       try {
@@ -180,6 +263,7 @@ async function run() {
         const reviewDoc = {
           applicationId: new ObjectId(applicationId),
           scholarshipId: scholarshipId ? new ObjectId(scholarshipId) : null,
+          scholarshipName: scholarshipName || "",
           userImage: userImage || "",
           userName: userName || "Anonymous",
           userEmail,
