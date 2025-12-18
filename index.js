@@ -58,8 +58,9 @@ async function run() {
     // ===== Applications =====
     app.get("/applications", async (req, res) => {
       const email = req.query.email;
+      const options = { sort: { applicationDate: -1 } }
       const result = await applicationCollection
-        .find({ userEmail: email })
+        .find({ userEmail: email }, options)
         .toArray();
       res.json(result);
     });
