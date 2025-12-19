@@ -289,8 +289,17 @@ async function run() {
 
     // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
-      const result = await scholarshipCollection.find().toArray();
-      res.json(result);
+      const { limit, skip } = req.query;
+
+      const result = await scholarshipCollection
+        .find()
+        .limit(Number(limit))
+        .skip(Number(skip))
+        .toArray();
+
+        const count = await scholarshipCollection.countDocuments();
+
+      res.json({result, total: count});
     });
 
     app.get("/scholarship-details/:id", async (req, res) => {
