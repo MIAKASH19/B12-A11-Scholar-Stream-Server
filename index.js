@@ -5,6 +5,14 @@ require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 const crypto = require("crypto");
 
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./scholarship-stream-firebase-adminsdk.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
+
 function generateTrackingId() {
   const prefix = "PRCL";
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, "");
@@ -13,8 +21,27 @@ function generateTrackingId() {
   return `${prefix}-${date}-${random}`;
 }
 
+// Middleware
 const app = express();
 const port = process.env.PORT || 3000;
+
+const verifyFBToken = async (req, res, next) => {
+  const token = req.headers.authorization;
+
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+
+  try {
+    const idToken = token.split(" ")[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    console.log("decoded in the token", decoded);
+    req.decoded_email = decoded.email;
+    next();
+  } catch (error) {
+    res.status(401).send({ message: "unauthorized access" });
+  }
+};
 
 app.use(cors());
 app.use(express.json());
@@ -37,28 +64,119 @@ async function run() {
     const applicationCollection = db.collection("applications");
     const paymentCollection = db.collection("payments");
     const reviewCollection = db.collection("reviews");
+    const moderatorCollection = db.collection("moderators");
 
     // ===== Users =====
     app.post("/users", async (req, res) => {
-      const newUser = { ...req.body, role: req.body.role || "Student" };
-      const existingUser = await userCollection.findOne({
-        email: newUser.email,
-      });
-      if (existingUser) {
-        return res.json({
-          success: true,
-          message: "User already exists",
-          user: existingUser,
-        });
+      const { email, displayName, photoURL, uid } = req.body;
+
+      if (!email) {
+        return res.status(400).send({ message: "email is required" });
       }
-      const result = await userCollection.insertOne(newUser);
-      res.json(result);
+
+      const userExists = await userCollection.findOne({ email });
+      if (userExists) {
+        return res.send({ message: "user exists" });
+      }
+
+      const user = {
+        email,
+        displayName,
+        photoURL,
+        uid,
+        role: "student",
+        createdAt: new Date(),
+      };
+
+      const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
+
+    // ===== Moderator Api ====
+    app.get("/moderators", async (req, res) => {
+      const query = {};
+      if (req.query.status) {
+        query.status = req.query.status;
+      }
+      const cursor = moderatorCollection.find(query).sort({ createdAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    app.post("/moderators", async (req, res) => {
+      const moderator = req.body;
+      moderator.status = "pending";
+      moderator.createdAt = new Date();
+
+      const result = await moderatorCollection.insertOne(moderator);
+      console.log("moderator applied");
+      res.send(result);
+    });
+
+    app.patch("/moderators/:id", verifyFBToken, async (req, res) => {
+      try {
+        const { status } = req.body;
+        const id = req.params.id;
+
+        const moderator = await moderatorCollection.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!moderator) {
+          return res.status(404).send({ message: "Moderator not found" });
+        }
+
+        const result = await moderatorCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status } }
+        );
+
+        if (status === "approved") {
+          await userCollection.updateOne(
+            { email: moderator.email },
+            { $set: { role: "moderator" } }
+          );
+        }
+        if (status !== "approved") {
+          await userCollection.updateOne(
+            { email: moderator.email },
+            { $set: { role: "student" } }
+          );
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.send(error);
+      }
+    });
+
+    app.delete("/moderators/:id", verifyFBToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const result = await moderatorCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
+
+        if (result.deletedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: "Moderator application not found" });
+        }
+
+        res.send({
+          success: true,
+          deletedCount: result.deletedCount,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Internal Server Error" });
+      }
     });
 
     // ===== Applications =====
     app.get("/applications", async (req, res) => {
       const email = req.query.email;
-      const options = { sort: { applicationDate: -1 } }
+      const options = { sort: { applicationDate: -1 } };
       const result = await applicationCollection
         .find({ userEmail: email }, options)
         .toArray();
@@ -132,40 +250,39 @@ async function run() {
       }
     });
 
-    app.delete("/applications/:id", async (req, res) => {
+    app.delete("/applications/:id", verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { email } = req.query;
 
-        if (!email) {
-          return res.status(400).send({ message: "Email is required" });
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "Forbidden access" });
         }
 
-        const query = {
+        const application = await applicationCollection.findOne({
           _id: new ObjectId(id),
           userEmail: email,
-        };
-
-        const application = await applicationCollection.findOne(query);
+        });
 
         if (!application) {
-          return res.status(404).send({ message: "Application not found" });
+          return res.status(404).send({ message: "Applications not found" });
         }
 
-        if (application.applicationStatus !== "pending") {
+        if (application.applicationStatus?.trim().toLowerCase() !== "pending") {
           return res
             .status(403)
-            .send({ message: "Only pending applications can be deleted" });
+            .send({ message: "Only pending applications can deleted" });
         }
 
-        const result = await applicationCollection.deleteOne(query);
+        const result = await applicationCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
 
         res.send({
           success: true,
           deletedCount: result.deletedCount,
         });
       } catch (error) {
-        console.error("DELETE /applications error:", error);
         res.status(500).send({ message: "Internal Server Error" });
       }
     });
@@ -300,6 +417,25 @@ async function run() {
     });
 
     // PAYMENT API
+    app.get("/payments", verifyFBToken, async (req, res) => {
+      const email = req.query.email;
+      const query = {};
+
+      if (email) {
+        query.customerEmail = email;
+
+        if (email !== req.decoded_email) {
+          res.status(403).send({ message: "Forbidden Access" });
+        }
+      }
+
+      const result = await paymentCollection
+        .find(query)
+        .sort({ paidAt: -1 })
+        .toArray();
+      res.json(result);
+    });
+
     app.post("/create-checkout-session", async (req, res) => {
       const {
         totalCost,
