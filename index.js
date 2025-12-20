@@ -289,17 +289,47 @@ async function run() {
 
     // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
-      const { limit, skip } = req.query;
+      const { limit = 6, skip = 0, category = "", location = "" } = req.query;
+
+      const query = {};
+
+      // ✅ Filter by Category
+      if (category) {
+        query.scholarshipCategory = category;
+      }
+
+      // ✅ Filter by Location
+      if (location) {
+        query.universityCountry = location;
+      }
+
+      console.log("Filter Query:", query);
 
       const result = await scholarshipCollection
-        .find()
+        .find(query)
         .limit(Number(limit))
         .skip(Number(skip))
         .toArray();
 
-        const count = await scholarshipCollection.countDocuments();
+      const count = await scholarshipCollection.countDocuments(query);
 
-      res.json({result, total: count});
+      res.json({ result, total: count });
+    });
+
+    app.get("/scholarship-countries", async (req, res) => {
+      try {
+        const countries = await scholarshipCollection
+          .aggregate([
+            { $group: { _id: "$universityCountry" } },
+            { $sort: { _id: 1 } },
+          ])
+          .toArray();
+
+        const countryList = countries.map((c) => c._id).filter(Boolean);
+        res.send(countryList);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to get countries" });
+      }
     });
 
     app.get("/scholarship-details/:id", async (req, res) => {
