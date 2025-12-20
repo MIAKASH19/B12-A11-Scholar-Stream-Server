@@ -289,16 +289,22 @@ async function run() {
 
     // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
-      const { limit = 6, skip = 0, category = "", location = "" } = req.query;
+      const { limit = 6, skip = 0, category = "", location = "", search="" } = req.query;
 
       const query = {};
 
-      // ✅ Filter by Category
+      if (search) {
+        query.$or = [
+          { scholarshipName: { $regex: search, $options: "i" } },
+          { universityName: { $regex: search, $options: "i" } },
+          { degree: { $regex: search, $options: "i" } },
+        ];
+      }
+
       if (category) {
         query.scholarshipCategory = category;
       }
 
-      // ✅ Filter by Location
       if (location) {
         query.universityCountry = location;
       }
