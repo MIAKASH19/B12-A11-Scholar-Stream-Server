@@ -67,6 +67,19 @@ async function run() {
     const moderatorCollection = db.collection("moderators");
 
     // ===== Users =====
+    app.get("/users", verifyFBToken, async (req, res) => {
+      const cursor = userCollection.find().sort({ createdAt: -1 });
+      const result = await cursor.toArray();
+      res.send(result);
+    });
+
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+      res.send({ role: user?.role || "student" });
+    });
+
     app.post("/users", async (req, res) => {
       const { email, displayName, photoURL, uid } = req.body;
 
@@ -89,6 +102,16 @@ async function run() {
       };
 
       const result = await userCollection.insertOne(user);
+      res.send(result);
+    });
+
+    app.patch("/users/:id", async (req, res) => {
+      const id = req.params.id;
+      const updateData = req.body;
+      const result = await userCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updateData }
+      );
       res.send(result);
     });
 
@@ -289,7 +312,13 @@ async function run() {
 
     // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
-      const { limit = 6, skip = 0, category = "", location = "", search="" } = req.query;
+      const {
+        limit = 6,
+        skip = 0,
+        category = "",
+        location = "",
+        search = "",
+      } = req.query;
 
       const query = {};
 
