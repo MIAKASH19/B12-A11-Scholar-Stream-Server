@@ -256,6 +256,12 @@ async function run() {
       }
     );
 
+    app.delete("/users/:id", verifyFBToken, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const result = await userCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
     // ===== Moderator Api ====
     app.get("/moderators", async (req, res) => {
       const query = {};
@@ -452,41 +458,52 @@ async function run() {
 
     // ---- Scholarships -----
     app.get("/scholarships", async (req, res) => {
-      const {
-        limit = 6,
-        skip = 0,
-        category = "",
-        location = "",
-        search = "",
-      } = req.query;
+      try {
+        const {
+          limit = 6,
+          skip = 0,
+          category = "",
+          location = "",
+          search = "",
+          sort = "",
+        } = req.query;
 
-      const query = {};
+        let sortOption = {};
+        if (sort === "asc") sortOption = { scholarshipPostDate: 1 };
+        else if (sort === "desc") sortOption = { scholarshipPostDate: -1 };
 
-      if (search) {
-        query.$or = [
-          { scholarshipName: { $regex: search, $options: "i" } },
-          { universityName: { $regex: search, $options: "i" } },
-          { degree: { $regex: search, $options: "i" } },
-        ];
+        const query = {};
+
+        if (search) {
+          query.$or = [
+            { scholarshipName: { $regex: search, $options: "i" } },
+            { universityName: { $regex: search, $options: "i" } },
+            { degree: { $regex: search, $options: "i" } },
+          ];
+        }
+
+        if (category) {
+          query.scholarshipCategory = category;
+        }
+
+        if (location) {
+          query.universityCountry = location;
+        }
+
+        const result = await scholarshipCollection
+          .find(query)
+          .sort(sortOption)
+          .skip(Number(skip))
+          .limit(Number(limit))
+          .toArray();
+
+        const count = await scholarshipCollection.countDocuments(query);
+
+        res.json({ result, total: count });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Failed to fetch scholarships" });
       }
-
-      if (category) {
-        query.scholarshipCategory = category;
-      }
-
-      if (location) {
-        query.universityCountry = location;
-      }
-
-      const result = await scholarshipCollection
-        .find(query)
-        .limit(Number(limit))
-        .skip(Number(skip))
-        .toArray();
-
-      const count = await scholarshipCollection.countDocuments(query);
-
-      res.json({ result, total: count });
     });
 
     app.post("/scholarships", async (req, res) => {
@@ -512,14 +529,14 @@ async function run() {
       }
     });
 
-    app.delete("/scholarships/:id", async (req, res) => { 
+    app.delete("/scholarships/:id", async (req, res) => {
       const id = req.params.id;
       const result = await scholarshipCollection.deleteOne({
         _id: new ObjectId(id),
       });
       res.send(result);
     });
-    
+
     app.get("/scholarship-countries", async (req, res) => {
       try {
         const countries = await scholarshipCollection
@@ -807,6 +824,50 @@ async function run() {
         _id: new ObjectId(id),
       });
       res.json(result);
+    });
+
+    // Analytic Api
+    app.get("/admin/analytics", async (req, res) => {
+      const totalUsers = await userCollection.countDocuments();
+      const totalScholarships = await scholarshipCollection.countDocuments();
+
+      const feesResult = await applicationCollection
+        .aggregate([
+          {
+            $group: {
+              _id: null,
+              totalFees: {
+                $sum: {
+                  $add: [
+                    { $toDouble: "$applicationFees" },
+                    { $toDouble: "$serviceCharge" },
+                  ],
+                },
+              },
+            },
+          },
+        ])
+        .toArray();
+
+      const totalFeesCollected = feesResult[0]?.totalFees || 0;
+
+      const applicationsByUniversity = await applicationCollection
+        .aggregate([
+          {
+            $group: {
+              _id: "$universityName",
+              count: { $sum: 1 },
+            },
+          },
+        ])
+        .toArray();
+
+      res.send({
+        totalUsers,
+        totalScholarships,
+        totalFeesCollected,
+        applicationsByUniversity,
+      });
     });
 
     app.get("/", (req, res) => {
