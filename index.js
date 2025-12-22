@@ -7,7 +7,9 @@ const crypto = require("crypto");
 
 const admin = require("firebase-admin");
 
-const serviceAccount = require("./scholarship-stream-firebase-adminsdk.json");
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8')
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -875,6 +877,7 @@ async function run() {
     });
 
     app.listen(port, () => console.log(`Server running on port ${port}`));
+    // await client.db("admin").command({ ping: 1 });
   } finally {
   }
 }
