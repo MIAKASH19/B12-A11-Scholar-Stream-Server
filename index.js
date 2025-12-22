@@ -72,12 +72,107 @@ async function run() {
     const verifyAdmin = async (req, res, next) => {
       const requesterEmail = req.decoded_email;
       const query = { email: requesterEmail };
-      const user = await userCollection().findOne(query);
+      const user = await userCollection.findOne(query);
       if (!user || user.role !== "admin") {
         return res.status(403).send({ message: "Forbidden Access" });
       }
       next();
     };
+
+    // ***** Moderator APIs *****
+    //verfiy moderator to access pages by middleware of verifyModerator
+    const verifyModerator = async (req, res, next) => {
+      try {
+        const email = req.decoded_email;
+
+        if (!email) {
+          return res.status(401).send({ message: "Unauthorized access" });
+        }
+
+        const user = await userCollection.findOne({ email });
+
+        if (!user || (user.role !== "moderator" && user.role !== "admin")) {
+          return res
+            .status(403)
+            .send({ message: "Forbidden: Moderator access only" });
+        }
+
+        next();
+      } catch (error) {
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    };
+
+    app.get(
+      "/applied-applications",
+      verifyFBToken,
+      verifyModerator,
+      async (req, res) => {
+        const cursor = applicationCollection
+          .find()
+          .sort({ applicationDate: -1 });
+        const result = await cursor.toArray();
+        res.json(result);
+      }
+    );
+
+    app.patch("/applications/status/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { applicationStatus } = req.body;
+
+        if (!applicationStatus) {
+          return res.status(400).send({ message: "Status is required" });
+        }
+
+        const result = await applicationCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              applicationStatus,
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    app.patch("/applications/feedback/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { feedback } = req.body;
+
+        if (!feedback) {
+          return res.status(400).send({ message: "Feedback is required" });
+        }
+
+        const result = await applicationCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              feedback,
+              feedbackDate: new Date(),
+            },
+          }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ message: "Application not found" });
+        }
+
+        res.send({
+          success: true,
+          message: "Feedback added successfully",
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Internal Server Error" });
+      }
+    });
+
+    // ****** Student Apis ******
 
     // ===== Users =====
     app.get("/users", verifyFBToken, async (req, res) => {
@@ -92,6 +187,26 @@ async function run() {
       const cursor = userCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
       res.send(result);
+    });
+
+    app.get("/users/:email", verifyFBToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        if (email !== req.decoded_email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const user = await userCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send(user);
+      } catch (error) {
+        res.status(500).send({ message: "Internal Server Error" });
+      }
     });
 
     app.get("/users/:email/role", async (req, res) => {
@@ -294,7 +409,6 @@ async function run() {
         const result = await applicationCollection.updateOne(query, updateDoc);
         res.send(result);
       } catch (error) {
-        console.error("PATCH /applications error:", error);
         res.status(500).send({ message: "Internal Server Error" });
       }
     });
@@ -364,8 +478,6 @@ async function run() {
         query.universityCountry = location;
       }
 
-      console.log("Filter Query:", query);
-
       const result = await scholarshipCollection
         .find(query)
         .limit(Number(limit))
@@ -377,6 +489,37 @@ async function run() {
       res.json({ result, total: count });
     });
 
+    app.post("/scholarships", async (req, res) => {
+      const scholarship = req.body;
+      const result = await scholarshipCollection.insertOne(scholarship);
+      res.send(result);
+    });
+
+    app.patch("/scholarships/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const { _id, ...updateData } = req.body;
+
+        const query = { _id: new ObjectId(id) };
+        const updatedDoc = { $set: updateData };
+
+        const result = await scholarshipCollection.updateOne(query, updatedDoc);
+        res.send(result);
+      } catch (error) {
+        console.error("Update error:", error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    app.delete("/scholarships/:id", async (req, res) => { 
+      const id = req.params.id;
+      const result = await scholarshipCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+      res.send(result);
+    });
+    
     app.get("/scholarship-countries", async (req, res) => {
       try {
         const countries = await scholarshipCollection
@@ -420,7 +563,10 @@ async function run() {
       if (email) query.userEmail = email;
 
       try {
-        const reviews = await reviewCollection.find(query).toArray();
+        const reviews = await reviewCollection
+          .find(query)
+          .sort({ reviewDate: -1 })
+          .toArray();
         res.json(reviews);
       } catch (error) {
         console.error("GET /reviews error:", error);
@@ -466,7 +612,6 @@ async function run() {
       }
     });
 
-    // Post review
     app.post("/reviews", async (req, res) => {
       const {
         applicationId,
