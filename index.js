@@ -66,9 +66,30 @@ async function run() {
     const reviewCollection = db.collection("reviews");
     const moderatorCollection = db.collection("moderators");
 
+    // middleware with db
+
+    // verify admin to access pages
+    const verifyAdmin = async (req, res, next) => {
+      const requesterEmail = req.decoded_email;
+      const query = { email: requesterEmail };
+      const user = await userCollection().findOne(query);
+      if (!user || user.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden Access" });
+      }
+      next();
+    };
+
     // ===== Users =====
     app.get("/users", verifyFBToken, async (req, res) => {
-      const cursor = userCollection.find().sort({ createdAt: -1 });
+      const { searchText } = req.query;
+      const query = {};
+      if (searchText) {
+        query.$or = [
+          { email: { $regex: searchText, $options: "i" } },
+          { displayName: { $regex: searchText, $options: "i" } },
+        ];
+      }
+      const cursor = userCollection.find(query).sort({ createdAt: -1 });
       const result = await cursor.toArray();
       res.send(result);
     });
@@ -105,15 +126,20 @@ async function run() {
       res.send(result);
     });
 
-    app.patch("/users/:id", async (req, res) => {
-      const id = req.params.id;
-      const updateData = req.body;
-      const result = await userCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: updateData }
-      );
-      res.send(result);
-    });
+    app.patch(
+      "/users/:id/role",
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        const id = req.params.id;
+        const updateData = req.body;
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+        res.send(result);
+      }
+    );
 
     // ===== Moderator Api ====
     app.get("/moderators", async (req, res) => {
